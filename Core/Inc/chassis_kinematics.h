@@ -94,33 +94,35 @@ void ChassisKinematics_ChassisToMotors(
     float vx, float vy, float omega,
     float motor_speeds[WHEEL_COUNT]);
 
-/* ======================== 运动学可调参数（Ozone 实时修改） ======================== */
+/**
+ * @brief  前向运动学：从 4 电机实际转速反算底盘运动（vx, vy, omega）。
+ *
+ *         逆矩阵（由逆运动学公式求逆推导）：
+ *           K  = gear_ratio / (√2 · wheel_radius)
+ *           vx = (m1 + m2 - m0 - m3) / (4·K)
+ *           vy = (m0 + m1 - m2 - m3) / (4·K)
+ *         omega = (m0 + m1 + m2 + m3) / (8·K·L)
+ *
+ *         用于制动阶段：从实际电机转速反推底盘运动方向，
+ *         以便施加方向一致的底盘级反向制动力。
+ *
+ * @param  motor_speeds  [in]  4 个电机的实际转速（rad/s，电机轴侧）
+ * @param  vx            [out] 底盘 X 方向速度（m/s，正值=右）
+ * @param  vy            [out] 底盘 Y 方向速度（m/s，正值=前）
+ * @param  omega         [out] 底盘旋转角速度（rad/s，正值=CCW）
+ */
+void ChassisKinematics_MotorsToChassis(
+    const volatile float motor_speeds[WHEEL_COUNT],
+    float *vx, float *vy, float *omega);
 
-/** @brief 底盘最大平移速度（m/s）。遥控器满偏时 vx 或 vy 分量的最大值。 */
-extern volatile float debug_kinematics_max_speed_ms;
-
-/** @brief 底盘最大旋转角速度（rad/s）。遥控器满偏时的 omega 最大值。 */
-extern volatile float debug_kinematics_max_omega_rad_s;
-
-/** @brief 全向轮半径（m）。用于线速度 → 电机角速度换算。 */
-extern volatile float debug_kinematics_wheel_radius_m;
-
-/** @brief 底盘半轴长（m）。轮位中心到 X/Y 轴的投影距离，影响旋转分量权重。 */
-extern volatile float debug_kinematics_wheel_base_m;
-
-/* ======================== 运动学诊断变量（只读观察，Ozone 可查看） ======================== */
-
-/** @brief 当前解算的底盘目标平移速度 X 分量（m/s）。 */
-extern volatile float debug_chassis_vx_ms;
-
-/** @brief 当前解算的底盘目标平移速度 Y 分量（m/s）。 */
-extern volatile float debug_chassis_vy_ms;
-
-/** @brief 当前解算的底盘目标旋转角速度（rad/s）。 */
-extern volatile float debug_chassis_omega_rad_s;
-
-/** @brief 运动学解算后的各电机目标转速（rad/s，电机轴侧）。 */
-extern volatile float debug_kinematics_motor_speed[WHEEL_COUNT];
+/* ======================== 运动学可调参数与诊断变量 ========================
+ *
+ *   所有运动学相关的可调参数（底盘尺寸、速度限制、CCW 修正）
+ *   和诊断变量（vx/vy/omega 快照、电机解算转速）已统一迁移到
+ *   debug.h / debug.c 的 第 4 块和第 7 块 中集中管理。
+ *
+ *   在 Ozone 中可直接修改和观察这些变量，无需查找多个文件。
+ * ======================================================================== */
 
 #ifdef __cplusplus
 }

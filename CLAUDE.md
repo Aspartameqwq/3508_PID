@@ -20,22 +20,24 @@ Toolchain: `arm-none-eabi-gcc` (Arm GNU Toolchain). CMake ≥ 3.22. Use `-G "Uni
 
 ```
 Core/Inc/
-├── main.h           ← Includes debug.h, control.h, DR16.h
-├── debug.h          ← All debug variable externs (arrays of MOTOR_COUNT=4) + quick-debug function decls
-├── control.h        ← Motor control API (per-motor motor_id param), mode macros, PID param structs
-├── pid.h            ← Generic PID controller (position-independent)
-├── DR16.h           ← DR16 receiver: packed RC_Ctl_t struct, API decls
+├── main.h                ← Includes debug.h, control.h, DR16.h
+├── debug.h               ← ALL debug variable externs (8 blocks) + BRAKE_HS_COUNT macro + quick-debug decls
+├── control.h              ← Motor control API (per-motor motor_id param), mode macros, PID param structs
+├── pid.h                  ← Generic PID controller (position-independent)
+├── DR16.h                 ← DR16 receiver: packed RC_Ctl_t struct, API decls
+├── chassis_kinematics.h   ← Forward + inverse kinematics API (X-type omni wheel), WHEEL_COUNT=4
 ├── can.h, usart.h, dma.h, gpio.h, tim.h  ← CubeMX HAL handles
-├── stm32f4xx_it.h   ← ISR decls
+├── stm32f4xx_it.h         ← ISR decls
 └── stm32f4xx_hal_conf.h
 
 Core/Src/
-├── main.c           ← Entry: init (DR16, CAN filter, Control), main loop with per-motor quick-mode dispatch
-├── control.c        ← THE core: per-motor cascaded PID, CAN RX/TX (0x200 packed), startup probe, stiction comp, turns
-├── pid.c            ← PID algorithm: integral separation, anti-windup, D-term IIR LPF
-├── debug.c          ← All debug variable definitions (arrays of 4, defaults live here)
-├── DR16.c           ← DMA double-buffer + IDLE ISR + 18-byte DBUS parser
-├── stm32f4xx_it.c   ← ISRs: USART3 IDLE → DR16 handler; CAN1 RX0 → HAL
+├── main.c                ← Entry: init, main loop dispatch (remote/speed/position), chassis brake logic
+├── control.c             ← THE core: per-motor cascaded PID, CAN RX/TX (0x200 packed), startup probe, stiction, turns
+├── pid.c                 ← PID algorithm: integral separation, anti-windup, D-term IIR LPF
+├── debug.c               ← ALL debug variable definitions (8 blocks, defaults live here) + quick-debug functions
+├── chassis_kinematics.c  ← RemoteToChassis (RC→vx/vy/ω) + ChassisToMotors (→4 speeds) + MotorsToChassis (forward)
+├── DR16.c                ← DMA double-buffer + IDLE ISR + 18-byte DBUS parser
+├── stm32f4xx_it.c        ← ISRs: USART3 IDLE → DR16 handler; CAN1 RX0 → HAL
 └── can.c, usart.c, dma.c, gpio.c, tim.c  ← CubeMX peripheral init
 ```
 
@@ -74,20 +76,29 @@ Per-motor `control_mode[i]` — each motor can independently be in speed or posi
 
 ### Debug System
 
-All tuning params are `volatile float debug_xxx[MOTOR_COUNT]` (arrays of 4) in `debug.c`. Ozone can read/write them live. `Control_ApplyPidParams()` syncs them to PID structs every control cycle for all 4 motors.
+All debug/tuning/diagnostic variables live in [debug.h](Core/Inc/debug.h) and [debug.c](Core/Src/debug.c) ONLY. They are organized in **8 numbered blocks** — see `## When Editing Code` for the block table. Ozone can read/write all `volatile float/uint` variables live.
 
-**Per-motor tuning** (examples):
-- `debug_speed_kp[0]` — motor 1 speed Kp
-- `debug_position_deadband_deg[2]` — motor 3 position deadband
-- `debug_set_speed[3]` — motor 4 speed target (in SPEED quick mode)
+`Control_ApplyPidParams()` syncs block 2/3 (PID params) to PID structs every control cycle for all 4 motors.
 
-**Scalar variables** (shared across all motors):
-- `debug_quick_mode` — quick mode selection
-- `debug_run_turns` — turns trigger (broadcast to all online motors)
-- `debug_gear_ratio`, `debug_turns_speed_rad_s` — turns params
-- `debug_remote_max_speed`, `debug_remote_deadzone` — remote params
+**Block overview** (see debug.h for full per-variable `@brief` comments):
+
+| Block | Content | Key variables |
+|-------|---------|--------------|
+| 1 | Quick debug tunables | `debug_quick_mode`, brake params, `debug_remote_deadzone` |
+| 2 | Speed PID (per-motor) | `debug_speed_kp[4]`, `debug_speed_ki[4]`, ... (11 arrays) |
+| 3 | Position PID (per-motor) | `debug_position_kp[4]`, `debug_position_deadband_deg[4]`, ... (9 arrays) |
+| 4 | Kinematics tunables | `debug_kinematics_max_speed_ms`, `debug_kinematics_bias_angle_deg`, ... |
+| 5 | Runtime diagnostics (per-motor) | `debug_actual_speed_rad_s[4]`, `debug_torque_cmd[4]`, ... |
+| 6 | Global diagnostics | `debug_main_loop_count`, `debug_control_task_count`, `debug_can_rx_raw_count` |
+| 7 | Kinematics diagnostics | `debug_chassis_vx_ms`, `debug_chassis_vy_ms`, `debug_chassis_omega_rad_s` |
+| 8 | DR16 DBUS diagnostics | `debug_dr16_raw[18]`, `debug_dr16_signal_timeout_ms`, ... |
 
 **Turns command** (one-shot, independent of quick_mode): set `debug_run_turns` non-zero in Ozone → main loop calls `Debug_QuickRunTurns()` for all motors → auto-clears after execution. Each motor tracks its own "moving carrot" + encoder tick accumulation independently.
+
+**Brake system** (chassis-level, two-stage, no position loop):
+- Stage 0 (0~300ms): Forward kinematics → reverse chassis (vx, vy, omega) → inverse kinematics → per-motor targets
+- Stage 1 (after 300ms): Speed mode + target=0 → hard stop iq=0 unconditionally
+- Tune: `debug_brake_reverse_speed_ms` (linear), `debug_brake_reverse_omega_rad_s` (angular), `BRAKE_HS_COUNT` (duration)
 
 ### CAN Communication
 
@@ -121,6 +132,31 @@ All tuning params are `volatile float debug_xxx[MOTOR_COUNT]` (arrays of 4) in `
 - **New user modules**: Add `.c` to top-level `CMakeLists.txt` `target_sources`, keep `.h` in `Core/Inc/`.
 - **Tuning defaults**: Change the initial value in `debug.c`. These are the values that take effect on boot before Ozone modifies them.
 - **New debug variables**: Declare `extern volatile` in `debug.h`, define in `debug.c` (as array of `MOTOR_COUNT` if per-motor, as scalar if global), update in control loop if they're diagnostics.
+- **DEBUG VARIABLES MUST LIVE IN debug.h/debug.c ONLY**: This is a hard rule. Never define or declare a `debug_xxx` or `volatile` tuning/diagnostic variable outside of `Core/Inc/debug.h` and `Core/Src/debug.c`. These two files are organized into 8 numbered blocks — always add new variables to the matching block:
+
+  | Block | Purpose | Array/Per-Motor? |
+  |-------|---------|------------------|
+  | 1 | Quick debug tunable params (mode, targets, brake, turns, remote) | Scalar or [4] |
+  | 2 | Speed PID params | `[MOTOR_COUNT]` per-motor |
+  | 3 | Position PID params | `[MOTOR_COUNT]` per-motor |
+  | 4 | Kinematics tunable params (chassis geometry, speeds, CCW, bias) | Scalar |
+  | 5 | Runtime diagnostics (angle, speed, torque, error) | `[MOTOR_COUNT]` per-motor |
+  | 6 | Global diagnostics (loop counts, CAN stats) | Scalar |
+  | 7 | Kinematics diagnostics (vx, vy, omega, motor speeds) | Scalar + [4] |
+  | 8 | DR16 DBUS diagnostics (signal quality, raw frames) | Scalar + [18] |
+
+  When adding a new feature that needs Ozone-tunable parameters or diagnostic variables:
+  1. **Identify the right block** from the table above
+  2. **Add `extern volatile` declaration** in `debug.h` in that block, with `@brief` Doxygen comment
+  3. **Add `volatile` definition with default** in `debug.c` in the same block, matching order
+  4. **Update any other files** (main.c, control.c, chassis_kinematics.c) to USE the variable, but never to define it
+  5. **Update 3508_PID.md** documentation
+  6. **Update this CLAUDE.md** if the feature is architecturally significant
+
+  **Violation examples** (things to NEVER do):
+  - `volatile float my_param = 0.0f;` in chassis_kinematics.c ← WRONG
+  - `extern volatile float debug_foo;` in chassis_kinematics.h ← WRONG
+  - `static float brake_timer;` in main.c that you want to tune in Ozone ← WRONG (must be `volatile` in debug.c)
 
 ## Project Documentation
 

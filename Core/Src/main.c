@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "chassis_kinematics.h"
+#include <math.h>    /* sqrtf — 底盘级反向制动中计算速度矢量模 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,8 +37,18 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 控制任务调度周期（ms）�?? */
+/* 控制任务调度周期（ms） */
 #define CONTROL_PERIOD_MS 10U
+
+/*
+ * 制动硬停阶段时长（控制任务迭代次数），宏定义见 debug.h。
+ *
+ * 时间换算：CONTROL_PERIOD_MS=10ms → BRAKE_HS_COUNT=300ms/10ms=30 次迭代。
+ * 修改时长只需改 debug.h 中的 BRAKE_HS_COUNT，例如：
+ *   150ms → 150/10 = 15    500ms → 500/10 = 50
+ *
+ * 每电机独立状态见下方 static 变量。
+ */
 
 /* USER CODE END PD */
 
@@ -49,6 +60,16 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+
+/** @brief 进入制动区时的 debug_control_task_count 快照（底盘级，非逐电机）。
+ *   用于反向制动阶段的计时：若当前控制迭代次数与入口计数之差
+ *   不足 BRAKE_HS_COUNT，则施加底盘级反向制动（线速度+角速度）。 */
+static uint32_t brake_entry_tick = 0U;
+
+/** @brief 上一轮迭代是否处于制动区（底盘级，边沿检测用）。
+ *   用于在进入制动区的上升沿记录制动起始时刻。 */
+static uint8_t  brake_in_zone = 0U;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -173,22 +194,164 @@ int main(void)
           float chassis_vx, chassis_vy, chassis_omega;
           float motor_speeds[4];
 
-          /* 步骤 1：遥控器通道 → 底盘目标运动（m/s 和 rad/s） */
+          /* 步骤 1：遥控器通道 → 底盘目标运动（m/s 和 rad/s）。
+           * RemoteToChassis() 仅做纯摇杆→速度映射（含死区），不做硬件补偿。 */
           ChassisKinematics_RemoteToChassis(
               RC_CtrlData.rc.ch0, RC_CtrlData.rc.ch1,
               RC_CtrlData.rc.ch2, RC_CtrlData.rc.ch3,
               &chassis_vx, &chassis_vy, &chassis_omega);
 
-          /* 步骤 2：底盘目标运动 → 4 电机目标转速（rad/s，电机轴侧） */
+          /* 步骤 2：硬件补偿（仅作用于遥控器解算出的速度矢量，制动等其他路径不受影响）。
+           *
+           * 补偿分两项，按先后顺序执行：
+           *   2a. 速度矢量偏向角修正 — 将 (vx, vy) 旋转 debug_kinematics_bias_angle_deg 度。
+           *       用于矫正因轮系安装不对称导致的方向偏移（如推正前车往左前偏）。
+           *       正值=CCW 旋转，负值=CW 旋转，设 0 禁用。
+           *   2b. CCW 偏航修正 — 根据平移速度大小，叠加与平移成正比的旋转角速度。
+           *       用于矫正因机械不对称（四电机出力不均、重心偏移）导致的直行偏航。
+           *       omega += gain × sqrt(vx² + vy²)，正值=CCW，设 0 禁用。
+           *
+           * 两项补偿独立可调，Ozone 中修改后立即生效。 */
+          if (debug_kinematics_bias_angle_deg != 0.0f)
+          {
+            float bias_rad = debug_kinematics_bias_angle_deg * (3.14159265f / 180.0f);
+            float cos_b = cosf(bias_rad);
+            float sin_b = sinf(bias_rad);
+            float vx_rot = chassis_vx * cos_b - chassis_vy * sin_b;
+            float vy_rot = chassis_vx * sin_b + chassis_vy * cos_b;
+            chassis_vx = vx_rot;
+            chassis_vy = vy_rot;
+          }
+
+          if (debug_kinematics_ccw_correction_gain != 0.0f)
+          {
+            float speed_mag = sqrtf(chassis_vx * chassis_vx + chassis_vy * chassis_vy);
+            chassis_omega += debug_kinematics_ccw_correction_gain * speed_mag;
+          }
+
+          /* 步骤 3：底盘目标运动（已补偿）→ 4 电机目标转速（rad/s，电机轴侧） */
           ChassisKinematics_ChassisToMotors(
               chassis_vx, chassis_vy, chassis_omega, motor_speeds);
 
-          /* 步骤 3：写入每个电机的目标转速，同步 debug_set_speed 供 Ozone 观察 */
-          for (i = 0; i < MOTOR_COUNT; i++)
+          /* 步骤 4：写入各电机目标，同步 debug_set_speed 供 Ozone 观察。
+           *
+           * 制动策略（底盘级两段式，无位置环）：
+           *   摇杆中位 → 所有电机解算转速低于 debug_brake_threshold_rad_s → 进入制动区。
+           *
+           *   段 0 — 底盘级反向制动（0~300ms，BRAKE_HS_COUNT 次控制迭代）：
+           *          前向运动学从实际电机转速反算底盘 (vx, vy, omega) →
+           *          施加与运动方向相反的小速度（线速度+角速度）→
+           *          逆运动学分解为一致的四电机目标转速。
+           *
+           *          线速度强度：debug_brake_reverse_speed_ms（默认 0.1 m/s）
+           *          角速度强度：debug_brake_reverse_omega_rad_s（默认 0.5 rad/s）
+           *          — 若两者均为 0，跳过此阶段直接进入段 1。
+           *          — 若 BRAKE_HS_COUNT == 0，跳过此阶段直接进入段 1。
+           *
+           *   段 1 — 强制零电流：反向制动时间到（或已禁用）后，强制 iq=0，
+           *          电机纯靠地面摩擦力滑行至自然停止。只要摇杆保持中位，
+           *          电机驱动电流恒为零。
+           *          （速度环 + 目标=0 → control.c hard stop 无条件零电流）
+           *
+           *   离开制动区（摇杆再次推动）→ 正常速度环驱动。 */
+                    for (i = 0; i < MOTOR_COUNT; i++)
           {
-            debug_set_speed[i] = motor_speeds[i];
-            MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
-            MotorControl_SetTargetSpeed(i, motor_speeds[i]);
+            float abs_spd = motor_speeds[i];
+            if (abs_spd < 0.0f) abs_spd = -abs_spd;
+
+            if (abs_spd < debug_brake_threshold_rad_s)
+            {
+              /* ====== 制动区：摇杆中位 ====== */
+
+              /* 边沿检测：刚进入制动区 → 记录当前控制任务计数 */
+              if (!brake_in_zone)
+              {
+                brake_entry_tick = debug_control_task_count;
+                brake_in_zone = 1U;
+              }
+
+              if ((debug_brake_reverse_speed_ms > 0.0f ||
+                    debug_brake_reverse_omega_rad_s > 0.0f) &&
+                  BRAKE_HS_COUNT > 0U &&
+                  (debug_control_task_count - brake_entry_tick) < BRAKE_HS_COUNT)
+              {
+                /* 段 0 — 底盘级反向制动：
+                 *
+                 * 1. 前向运动学：从实际电机转速反算底盘 (vx, vy, omega)
+                 * 2. 施加与运动方向相反的小线速度 + 角速度
+                 * 3. 逆运动学分解为四电机一致的目标转速
+                 *
+                 * 关键：底盘级制动保证四电机协同运动，避免逐电机制动时
+                 * 各电机反向速度不一致导致的底盘解体运动。 */
+
+                /* 1. 前向运动学 */
+                float actual_vx, actual_vy, actual_omega;
+                ChassisKinematics_MotorsToChassis(
+                    debug_actual_speed_rad_s,
+                    &actual_vx, &actual_vy, &actual_omega);
+
+                /* 2. 计算反向制动底盘速度 */
+                float brake_vx = 0.0f, brake_vy = 0.0f, brake_omega = 0.0f;
+
+                /* 线速度反向：归一化方向 × 制动强度 */
+                if (debug_brake_reverse_speed_ms > 0.0f)
+                {
+                  float v_mag = sqrtf(actual_vx * actual_vx + actual_vy * actual_vy);
+                  if (v_mag > 0.005f)  /* 0.5 cm/s 以上才触发，避免静止时数值噪声 */
+                  {
+                    float inv_mag = 1.0f / v_mag;
+                    brake_vx = -(actual_vx * inv_mag) * debug_brake_reverse_speed_ms;
+                    brake_vy = -(actual_vy * inv_mag) * debug_brake_reverse_speed_ms;
+                  }
+                }
+
+                /* 角速度反向：方向与当前旋转相反 */
+                if (debug_brake_reverse_omega_rad_s > 0.0f)
+                {
+                  float abs_omega = (actual_omega < 0.0f) ? -actual_omega : actual_omega;
+                  if (abs_omega > 0.01f)  /* 0.01 rad/s 死区 */
+                  {
+                    brake_omega = (actual_omega > 0.0f)
+                        ? -debug_brake_reverse_omega_rad_s
+                        :  debug_brake_reverse_omega_rad_s;
+                  }
+                }
+
+                /* 3. 逆运动学：底盘速度 → 四电机目标转速 */
+                float brake_motor_speeds[4];
+                ChassisKinematics_ChassisToMotors(
+                    brake_vx, brake_vy, brake_omega, brake_motor_speeds);
+
+                for (i = 0; i < MOTOR_COUNT; i++)
+                {
+                  debug_set_speed[i] = brake_motor_speeds[i];
+                  MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+                  MotorControl_SetTargetSpeed(i, brake_motor_speeds[i]);
+                }
+                break;  /* 已在循环内设置了全部 4 电机，跳出外层 for */
+              }
+              else
+              {
+                /* 段 1 — 强制零电流：反向制动时间到（或已禁用），
+                 * 速度环 + 目标=0 → control.c hard stop 无条件 iq=0。
+                 * 此后只要摇杆保持中位，电机驱动电流恒为零。 */
+                for (i = 0; i < MOTOR_COUNT; i++)
+                {
+                  debug_set_speed[i] = 0.0f;
+                  MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+                  MotorControl_SetTargetSpeed(i, 0.0f);
+                }
+                break;  /* 已在循环内设置了全部 4 电机，跳出外层 for */
+              }
+            }
+            else
+            {
+              /* 正常驱动区：速度环。同时清除制动区标记，下次进入时重新计时。 */
+              brake_in_zone = 0U;
+              debug_set_speed[i] = motor_speeds[i];
+              MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+              MotorControl_SetTargetSpeed(i, motor_speeds[i]);
+            }
           }
         }
       }

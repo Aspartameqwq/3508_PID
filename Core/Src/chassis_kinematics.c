@@ -23,26 +23,12 @@
 /* 遥控器摇杆单侧最大偏移量（1684 - 1024 = 1024 - 364 = 660） */
 #define RC_MAX_OFFSET 660
 
-/* ======================== 运动学可调参数定义（Ozone 实时修改） ======================== */
-
-/* 底盘最大平移速度（m/s）。典型竞赛机器人取值 1.0~4.0 m/s。 */
-volatile float debug_kinematics_max_speed_ms    = 2.0f;
-
-/* 底盘最大旋转角速度（rad/s）。2π ≈ 1 rev/s，典型值 3.0~10.0 rad/s。 */
-volatile float debug_kinematics_max_omega_rad_s = 6.28f;
-
-/* 全向轮半径（m），默认 50 mm（常见 100 mm 直径全向轮）。 */
-volatile float debug_kinematics_wheel_radius_m  = 0.05f;
-
-/* 底盘半轴长（m），轮位中心到 X/Y 轴的投影距离，默认 150 mm（正方形边长 300 mm）。 */
-volatile float debug_kinematics_wheel_base_m    = 0.15f;
-
-/* ======================== 运动学诊断变量定义（只读观察） ======================== */
-
-volatile float debug_chassis_vx_ms                        = 0.0f;
-volatile float debug_chassis_vy_ms                        = 0.0f;
-volatile float debug_chassis_omega_rad_s                  = 0.0f;
-volatile float debug_kinematics_motor_speed[WHEEL_COUNT]  = {0.0f, 0.0f, 0.0f, 0.0f};
+/* ======================== 运动学可调参数与诊断变量 ========================
+ *
+ *   所有运动学相关的 volatile 变量定义已统一迁移到 debug.c
+ *   （第 4 块 — 运动学可调参数，第 7 块 — 运动学诊断变量）。
+ *   本文件通过 debug.h 的 extern 声明访问这些变量。
+ * ======================================================================== */
 
 /* ======================== 运动学解算函数实现 ======================== */
 
@@ -119,6 +105,17 @@ void ChassisKinematics_RemoteToChassis(
     {
         *omega = (float)offset / (float)RC_MAX_OFFSET * debug_kinematics_max_omega_rad_s;
     }
+
+    /*
+     * 注意：CCW 偏航修正（debug_kinematics_ccw_correction_gain）和
+     * 速度矢量偏向角修正（debug_kinematics_bias_angle_deg）已从本函数
+     * 移至 main.c 的遥控器路径中执行。
+     *
+     * 原因：这两项修正仅在遥控器模式下生效（仅作用于遥控器解算出的速度矢量），
+     * 制动等其他路径不应受其影响。将此修正放在运动学通用库函数中会导致
+     * 职责不清，增加调试难度。
+     *
+     * 当前本函数仅做纯摇杆通道 → 底盘速度映射（含死区），不做任何硬件补偿。 */
 }
 
 /**
@@ -218,4 +215,72 @@ void ChassisKinematics_ChassisToMotors(
     debug_kinematics_motor_speed[1] = motor_speeds[1];
     debug_kinematics_motor_speed[2] = motor_speeds[2];
     debug_kinematics_motor_speed[3] = motor_speeds[3];
+}
+
+/**
+ * @brief  前向运动学：从 4 电机实际转速反算底盘运动（vx, vy, omega）。
+ *
+ *         逆矩阵推导（由逆运动学公式求逆）：
+ *           设 motor[0] = K·(-vx + vy + 2L·ω)
+ *              motor[1] = K·(+vx + vy + 2L·ω)
+ *              motor[2] = K·(+vx - vy + 2L·ω)
+ *              motor[3] = K·(-vx - vy + 2L·ω)
+ *           其中 K = gear_ratio / (√2 · wheel_radius)
+ *
+ *           解方程：
+ *             vx = (m1 + m2 - m0 - m3) / (4·K)
+ *             vy = (m0 + m1 - m2 - m3) / (4·K)
+ *           omega = (m0 + m1 + m2 + m3) / (8·K·L)
+ *
+ *         验证（pure +Y forward, ω=0）：
+ *           m0=K·vy, m1=K·vy, m2=-K·vy, m3=-K·vy
+ *           vx = (Kvy+K(-vy) - Kvy - K(-vy)) / (4K) = 0  ✓
+ *           vy = (Kvy+Kvy - K(-vy) - K(-vy)) / (4K) = vy  ✓
+ *
+ * @param  motor_speeds  [in]  4 个电机的实际转速（rad/s，电机轴侧）
+ * @param  vx            [out] 底盘 X 方向速度（m/s，正值=右）
+ * @param  vy            [out] 底盘 Y 方向速度（m/s，正值=前）
+ * @param  omega         [out] 底盘旋转角速度（rad/s，正值=CCW）
+ */
+void ChassisKinematics_MotorsToChassis(
+    const volatile float motor_speeds[WHEEL_COUNT],
+    float *vx, float *vy, float *omega)
+{
+    if (motor_speeds == NULL || vx == NULL || vy == NULL || omega == NULL)
+    {
+        return;
+    }
+
+    float radius = debug_kinematics_wheel_radius_m;
+    float base_l = debug_kinematics_wheel_base_m;
+    float gear_r = debug_gear_ratio;
+
+    /* K = gear_ratio / (√2 · wheel_radius) */
+    if (radius <= 0.0f || gear_r <= 0.0f)
+    {
+        *vx    = 0.0f;
+        *vy    = 0.0f;
+        *omega = 0.0f;
+        return;
+    }
+
+    float K      = gear_r / (SQRT2 * radius);
+    float m0     = motor_speeds[0];
+    float m1     = motor_speeds[1];
+    float m2     = motor_speeds[2];
+    float m3     = motor_speeds[3];
+    float sum_m  = m0 + m1 + m2 + m3;
+
+    /* 若所有电机转速均为 0，直接返回避免除零（K > 0 始终成立但 L 可能为 0） */
+    if (sum_m == 0.0f && m0 == 0.0f && m1 == 0.0f && m2 == 0.0f && m3 == 0.0f)
+    {
+        *vx    = 0.0f;
+        *vy    = 0.0f;
+        *omega = 0.0f;
+        return;
+    }
+
+    *vx    = (m1 + m2 - m0 - m3) / (4.0f * K);
+    *vy    = (m0 + m1 - m2 - m3) / (4.0f * K);
+    *omega = (base_l > 0.0f) ? sum_m / (8.0f * K * base_l) : 0.0f;
 }
