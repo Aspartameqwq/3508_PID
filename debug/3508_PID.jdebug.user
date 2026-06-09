@@ -1,0 +1,64 @@
+
+
+GraphedExpression="debug_actual_speed_rad_s", Color=#e56a6f, Show=0
+GraphedExpression="debug_actual_angle_deg", Color=#35792b
+GraphedExpression="debug_set_speed", Color=#769dda, Show=0
+GraphedExpression="debug_set_position", Color=#b14f0d
+GraphedExpression="debug_target_angle_deg_watch", Color=#b3c38e
+OpenDocument="control.c", FilePath="D:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/Core/Src/control.c", Line=65
+OpenDocument="startup_stm32f407xx.s", FilePath="D:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/startup_stm32f407xx.s", Line=45
+OpenDocument="debug.c", FilePath="D:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/Core/Src/debug.c", Line=34
+OpenDocument="stm32f4xx_hal.c", FilePath="C:/Users/Aspartame/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal.c", Line=308
+OpenDocument="stm32f4xx_hal_can.c", FilePath="C:/Users/Aspartame/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c", Line=1553
+OpenDocument="main.c", FilePath="D:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/Core/Src/main.c", Line=55
+OpenToolbar="Debug", Floating=0, x=0, y=0
+OpenWindow="Call Stack", DockArea=RIGHT, x=0, y=2, w=714, h=372, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Source Files", DockArea=LEFT, x=0, y=2, w=711, h=484, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=714, h=241, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Break & Tracepoints", DockArea=LEFT, x=0, y=1, w=711, h=496, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VectorCatchIndexMask=254
+OpenWindow="Memory 1", DockArea=BOTTOM, x=0, y=0, w=2560, h=247, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, EditorAddress=0x200002C0
+OpenWindow="Local Data", DockArea=RIGHT, x=0, y=1, w=714, h=252, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Watched Data 1", DockArea=RIGHT, x=0, y=2, w=714, h=372, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Code Profile", DockArea=LEFT, x=0, y=0, w=711, h=192, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=3, w=714, h=287, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=FLOATING, x=567, y=215, w=1251, h=755, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=1, CodePaneShown=1, PinCursor="Cursor Movable", TimePerDiv="200 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="896;0", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=1, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="1033;-69", CodeGraphLegendShown=1, CodeGraphLegendPosition="974;0"
+SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
+TableHeader="Call Stack", SortCol="Function", SortOrder="ASCENDING", VisibleCols=["Function";"Stack Frame";"Source";"PC";"Return Address";"Stack Used"], ColWidths=[100;106;100;100;130;178]
+TableHeader="Vector Catches", SortCol="", SortOrder="ASCENDING", VisibleCols=["";"Vector Catch";"Description"], ColWidths=[50;300;500]
+TableHeader="Break & Tracepoints", SortCol="", SortOrder="DESCENDING", VisibleCols=["";"Type";"Location";"Extras"], ColWidths=[100;100;671;100]
+TableHeader="Local Data", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Location";"Size";"Type";"Scope"], ColWidths=[100;100;102;100;100;212]
+TableHeader="Source Files", SortCol="File", SortOrder="ASCENDING", VisibleCols=["File";"Status";"Size";"#Insts";"Path"], ColWidths=[300;100;100;100;1022]
+TableHeader="Code Profile", SortCol="File / Function", SortOrder="ASCENDING", VisibleCols=["File / Function";"Source Coverage";"Inst. Coverage";"Run Count";"Fetch Count";"Load"], ColWidths=[1583;158;174;110;126;104]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" debug_actual_speed_rad_s";" debug_actual_angle_deg";" debug_set_speed";" debug_set_position";" debug_target_angle_deg_watch"], ColWidths=[100;100;100;100;100;100;100]
+TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[346;154;114;124;114;144;110;126;126]
+TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
+TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh"], ColWidths=[225;233;150;100]
+TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;100;100;1506]
+WatchedExpression="debug_quick_mode", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_set_speed", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_set_position", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_active_motor_id", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_actual_angle_deg", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_actual_speed_rad_s", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_can_rx_raw_count", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_speed_kp", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_speed_ki", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_speed_kd", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_position_kp", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_position_ki", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_position_kd", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="RC_CtrlData", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_dr16_idle_count", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_dr16_frame_count", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_dr16_ndtr", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_remote_max_speed", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_speed_derivative_alpha", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_position_error_deg", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_torque_cmd", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_set_position", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_speed_stiction_comp_iq", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_position_stiction_threshold_deg", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_run_turns", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_turns_speed_rad_s", RefreshRate=5, Window=Watched Data 1
+WatchedExpression="debug_target_angle_deg_watch", RefreshRate=5, Window=Watched Data 1

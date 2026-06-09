@@ -1,0 +1,8 @@
+device STM32F407IG
+si swd
+speed 1000
+connect
+loadfile "d:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/build/Debug/3508_PID.elf"
+r
+g
+qc

@@ -1,0 +1,27 @@
+# Build output
+build/
+*.o
+*.obj
+*.elf
+*.hex
+*.bin
+*.map
+*.d
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Debug
+*.crf
+*.d
+*.dep
+*.o.d
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build build/Debug)",
+      "Bash(ls \"D:/Debug_tools/JLink_V810g/\" 2>/dev/null | head -20)",
+      "Read(//d/Debug_tools/JLink_V810g/**)",
+      "Bash(\"D:/Debug_tools/JLink_V810g/JLink.exe\" -device STM32F407IG -if SWD -speed 1000 -USB 164000406 -CommandFile flash_script.jlink)",
+      "Bash(cmake --build build/Debug --verbose)",
+      "Bash(\"D:/13.2 Rel1/bin/arm-none-eabi-readelf.exe\" --debug-dump=info \"d:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/build/Debug/3508_PID.elf\")",
+      "Bash(\"D:/13.2 Rel1/bin/arm-none-eabi-readelf.exe\" --debug-dump=info \"d:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/cmake-build-debug/3508_PID.elf\")",
+      "Bash(cmake --build \"d:/CubeMX/CubeMX_Project/electron_school_2026/3508_PID/build/Debug\")",
+      "Bash(cmake --build build)"
+    ]
+  }
+}
