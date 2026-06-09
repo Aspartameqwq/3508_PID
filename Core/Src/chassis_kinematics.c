@@ -82,8 +82,9 @@ void ChassisKinematics_RemoteToChassis(
         return;
     }
 
-    /* ====== X 方向平移：ch2（左摇杆水平），右=正 ====== */
-    offset = (int32_t)ch2 - RC_MID_VALUE;
+    /* ====== X 方向平移：ch2（左摇杆水平），右=正 ======
+     * （符号方向由电机安装方向决定，若左右反了就改这里的 offset 符号） */
+    offset = (int32_t)RC_MID_VALUE - (int32_t)ch2;
     if ((uint32_t)(offset > 0 ? offset : -offset) <= (uint32_t)debug_remote_deadzone)
     {
         *vx = 0.0f;

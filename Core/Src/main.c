@@ -183,9 +183,10 @@ int main(void)
           ChassisKinematics_ChassisToMotors(
               chassis_vx, chassis_vy, chassis_omega, motor_speeds);
 
-          /* 步骤 3：写入每个电机的目标转速，全部保持速度环模式 */
+          /* 步骤 3：写入每个电机的目标转速，同步 debug_set_speed 供 Ozone 观察 */
           for (i = 0; i < MOTOR_COUNT; i++)
           {
+            debug_set_speed[i] = motor_speeds[i];
             MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
             MotorControl_SetTargetSpeed(i, motor_speeds[i]);
           }
