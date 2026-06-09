@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/debug.c
     Core/Src/control.c
     Core/Src/DR16.c
+    Core/Src/chassis_kinematics.c
 )
 
 # Add include paths

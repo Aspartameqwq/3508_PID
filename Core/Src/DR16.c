@@ -63,6 +63,14 @@ void DR16_Init(void)
 
     /* ---------- Enable USART3 IDLE interrupt ---------- */
     __HAL_UART_ENABLE_IT(&huart3, UART_IT_IDLE);
+
+    /* ---------- 初始化 RC_CtrlData 通道为中位值，防止上电未收到遥控器信号时电机暴走 ---------- */
+    RC_CtrlData.rc.ch0 = RC_CH_VALUE_OFFSET;   /* 1024 */
+    RC_CtrlData.rc.ch1 = RC_CH_VALUE_OFFSET;
+    RC_CtrlData.rc.ch2 = RC_CH_VALUE_OFFSET;
+    RC_CtrlData.rc.ch3 = RC_CH_VALUE_OFFSET;
+    RC_CtrlData.rc.s1  = RC_SW_MID;            /* 3 = MID */
+    RC_CtrlData.rc.s2  = RC_SW_MID;
 }
 
 /**
@@ -124,20 +132,22 @@ void DR16_USART3_IDLE_IRQHandler(void)
 /**
   * @brief  Parse 18-byte DBUS raw frame into RC_CtrlData.
   *
-  *         DBUS frame bit layout (DJI DR16 receiver):
-  *         Byte[0]    : ch0[7:0]
-  *         Byte[1]    : ch0[10:8] | ch1[4:0]<<3
-  *         Byte[2]    : ch1[10:5] | ch2[1:0]<<6
-  *         Byte[3]    : ch2[9:2]
-  *         Byte[4]    : ch2[10] | ch3[6:0]<<1
-  *         Byte[5]    : ch3[10:7] | s1[1:0]<<4 | s2[1:0]<<6
-  *         Byte[6-7]  : mouse.x (int16)
-  *         Byte[8-9]  : mouse.y (int16)
-  *         Byte[10-11]: mouse.z (int16)
-  *         Byte[12]   : mouse.press_l
-  *         Byte[13]   : mouse.press_r
-  *         Byte[14-15]: key.v (uint16)
-  *         Byte[16-17]: reserved
+  *         DBUS frame bit layout (DJI DR16 receiver, 144 bits = 18 bytes):
+  *           Field       Offset(bit)  Len(bit)   Byte mapping
+  *           ─────────   ───────────  ────────   ─────────────────────────────
+  *           ch0             0          11       Byte[0][7:0] | Byte[1][2:0]<<8
+  *           ch1            11          11       Byte[1][7:3] | Byte[2][5:0]<<5
+  *           ch2            22          11       Byte[2][7:6] | Byte[3][7:0]<<2 | Byte[4][0]<<10
+  *           ch3            33          11       Byte[4][7:1] | Byte[5][3:0]<<7
+  *           S1             44           2       Byte[5][5:4]
+  *           S2             46           2       Byte[5][7:6]
+  *           Mouse X        48          16       Byte[6] | Byte[7]<<8  (int16)
+  *           Mouse Y        64          16       Byte[8] | Byte[9]<<8  (int16)
+  *           Mouse Z        80          16       Byte[10] | Byte[11]<<8 (int16)
+  *           Mouse Left     96           8       Byte[12]
+  *           Mouse Right   104           8       Byte[13]
+  *           Keys          112          16       Byte[14] | Byte[15]<<8 (uint16)
+  *           Reserved      128          16       Byte[16] | Byte[17]<<8
   *
   * @param  pData: pointer to 18-byte raw buffer
   */
@@ -150,16 +160,30 @@ void RemoteDataProcess(uint8_t *pData)
 
     debug_dr16_frame_count++;
 
-    /* --- RC channels: 11-bit values (0 ~ 2047) --- */
+    /* 更新最后一次收到有效帧的时间戳，供 main.c 判断信号是否丢失 */
+    debug_dr16_last_frame_tick = HAL_GetTick();
+
+    /* --- RC channels: 11-bit values (0 ~ 2047) ---
+     *
+     * 位域布局（DBUS 18 字节帧，字节序 LSB-first）：
+     *   ch0: Byte[0][7:0]  | Byte[1][2:0] << 8  → frame bit  0 ~ 10
+     *   ch1: Byte[1][7:3]  | Byte[2][5:0] << 5  → frame bit 11 ~ 21
+     *   ch2: Byte[2][7:6]  | Byte[3][7:0] << 2 | Byte[4][0] << 10
+     *                                             → frame bit 22 ~ 32
+     *   ch3: Byte[4][7:1]  | Byte[5][3:0] << 7  → frame bit 33 ~ 43
+     *
+     * 掩码 0x07FF 截取低 11 位，消除相邻通道的残留位。 */
     RC_CtrlData.rc.ch0 = ((int16_t)pData[0] | ((int16_t)pData[1] << 8)) & 0x07FF;
     RC_CtrlData.rc.ch1 = (((int16_t)pData[1] >> 3) | ((int16_t)pData[2] << 5)) & 0x07FF;
     RC_CtrlData.rc.ch2 = (((int16_t)pData[2] >> 6) | ((int16_t)pData[3] << 2) |
                           ((int16_t)pData[4] << 10)) & 0x07FF;
     RC_CtrlData.rc.ch3 = (((int16_t)pData[4] >> 1) | ((int16_t)pData[5] << 7)) & 0x07FF;
 
-    /* --- RC switches: 2-bit values --- */
-    RC_CtrlData.rc.s1 = ((pData[5] >> 4) & 0x000C) >> 2;
-    RC_CtrlData.rc.s2 = ((pData[5] >> 4) & 0x0003);
+    /* --- RC switches: 2-bit values ---
+     *   S1: Byte[5][5:4]  → frame bit 44 ~ 45
+     *   S2: Byte[5][7:6]  → frame bit 46 ~ 47 */
+    RC_CtrlData.rc.s1 = (pData[5] >> 4) & 0x03U;
+    RC_CtrlData.rc.s2 = (pData[5] >> 6) & 0x03U;
 
     /* --- Mouse values --- */
     RC_CtrlData.mouse.x = ((int16_t)pData[6]) | ((int16_t)pData[7] << 8);
@@ -168,6 +192,6 @@ void RemoteDataProcess(uint8_t *pData)
     RC_CtrlData.mouse.press_l = pData[12];
     RC_CtrlData.mouse.press_r = pData[13];
 
-    /* --- Keyboard keys --- */
-    RC_CtrlData.key.v = ((int16_t)pData[14]);
+    /* --- Keyboard keys (16-bit, Byte[14] Byte[15]) --- */
+    RC_CtrlData.key.v = ((uint16_t)pData[14] | ((uint16_t)pData[15] << 8));
 }

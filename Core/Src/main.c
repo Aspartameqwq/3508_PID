@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "chassis_kinematics.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -124,44 +124,93 @@ int main(void)
     /* USER CODE BEGIN 3 */
     debug_main_loop_count++;
 
-    /* 转圈触发：Ozone 设 debug_run_turns 非零→执行一次→自动清零 */
-    if ((debug_run_turns != 0.0f) && (debug_feedback_valid != 0U))
+    /* 转圈触发：Ozone 设 debug_run_turns 非零→所有在线电机执行一次→自动清零。
+     * Debug_QuickRunTurns 内部已按电机逐台检查 feedback_valid，无需外层检查。 */
+    if (debug_run_turns != 0.0f)
     {
       float turns = debug_run_turns;
       debug_run_turns = 0.0f;
       Debug_QuickRunTurns(turns);
     }
 
+    /* ====== 快捷调试模式调度 ====== */
     if (debug_quick_mode == DEBUG_QUICK_MODE_REMOTE)
     {
-      /* 遥控器 ch3 映射到转速：1024=停止, 减小=正转, 增大=反转 */
-      int32_t ch3_offset = (int32_t)RC_CtrlData.rc.ch3 - 1024;
-      float target_speed;
-      if ((uint32_t)((ch3_offset > 0) ? ch3_offset : -ch3_offset) <= (uint32_t)debug_remote_deadzone)
+      /* ====== 遥控器模式（全向轮 X 型底盘运动学解算） ======
+       *
+       * 摇杆映射：
+       *   左摇杆 ch2（左右）→ X 平移    右摇杆 ch0（左右）→ 旋转
+       *   左摇杆 ch3（上下）→ Y 平移    右摇杆 ch1（上下）→ 预留
+       *
+       * 信号丢失保护：
+       *   DR16_Init() 已将 RC_CtrlData 初始化为中位值（各通道=1024），
+       *   因此上电后、未收到第一帧时，摇杆读数为中位 → 车速为零。
+       *   同时检查 last_frame_tick：若从未收到帧或超时未更新 → 强制归零。
+       *   超时阈值 debug_dr16_signal_timeout_ms（默认 500 ms）。 */
       {
-        target_speed = 0.0f;
+        uint32_t now_tick = HAL_GetTick();
+        uint8_t  signal_lost = 0U;
+        uint8_t  i;
+
+        /* 信号丢失判断：从未收到帧，或距最后一帧超过超时阈值 */
+        if (debug_dr16_last_frame_tick == 0U ||
+            (now_tick - debug_dr16_last_frame_tick) > debug_dr16_signal_timeout_ms)
+        {
+          signal_lost = 1U;
+        }
+
+        if (signal_lost)
+        {
+          /* 遥控器信号丢失 → 所有电机目标转速归零，确保安全 */
+          for (i = 0; i < MOTOR_COUNT; i++)
+          {
+            MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+            MotorControl_SetTargetSpeed(i, 0.0f);
+          }
+        }
+        else
+        {
+          float chassis_vx, chassis_vy, chassis_omega;
+          float motor_speeds[4];
+
+          /* 步骤 1：遥控器通道 → 底盘目标运动（m/s 和 rad/s） */
+          ChassisKinematics_RemoteToChassis(
+              RC_CtrlData.rc.ch0, RC_CtrlData.rc.ch1,
+              RC_CtrlData.rc.ch2, RC_CtrlData.rc.ch3,
+              &chassis_vx, &chassis_vy, &chassis_omega);
+
+          /* 步骤 2：底盘目标运动 → 4 电机目标转速（rad/s，电机轴侧） */
+          ChassisKinematics_ChassisToMotors(
+              chassis_vx, chassis_vy, chassis_omega, motor_speeds);
+
+          /* 步骤 3：写入每个电机的目标转速，全部保持速度环模式 */
+          for (i = 0; i < MOTOR_COUNT; i++)
+          {
+            MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+            MotorControl_SetTargetSpeed(i, motor_speeds[i]);
+          }
+        }
       }
-      else
-      {
-        target_speed = (float)(-ch3_offset) / 660.0f * debug_remote_max_speed;
-      }
-      Debug_QuickRunSpeed(target_speed);
-    }
-    else if (debug_quick_mode == DEBUG_QUICK_MODE_REMOTE_POSITION)
-    {
-      /* 遥控器 ch2 映射到角度：364→0°, 1024→180°, 1684→360° */
-      float target_angle = ((float)((int32_t)RC_CtrlData.rc.ch2) - 364.0f) * (360.0f / 1320.0f);
-      if (target_angle < 0.0f)   target_angle = 0.0f;
-      if (target_angle > 360.0f) target_angle = 360.0f;
-      Debug_QuickRunPosition(target_angle);
     }
     else if (debug_quick_mode == DEBUG_QUICK_MODE_SPEED)
     {
-      Debug_QuickRunSpeed(debug_set_speed);
+      /* 速度环模式：每个电机独立读取 debug_set_speed[i]。 */
+      uint8_t i;
+      for (i = 0; i < MOTOR_COUNT; i++)
+      {
+        MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_SPEED);
+        MotorControl_SetTargetSpeed(i, debug_set_speed[i]);
+      }
     }
     else
     {
-      Debug_QuickRunPosition(debug_set_position);
+      /* 位置环模式（默认回退）：每个电机独立读取 debug_set_position[i]。 */
+      uint8_t i;
+      for (i = 0; i < MOTOR_COUNT; i++)
+      {
+        MotorControl_SetControlMode(i, MOTOR_CONTROL_MODE_POSITION);
+        MotorControl_SetTargetAngle(i, debug_set_position[i]);
+      }
     }
 
     uint32_t now = HAL_GetTick();
