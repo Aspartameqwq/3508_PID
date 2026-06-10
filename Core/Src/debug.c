@@ -44,10 +44,23 @@ volatile uint16_t debug_remote_deadzone        = 20U;
  *
  * 制动全程不使用位置环，确保摇杆长时间处于中位时电机驱动电流必为零。 */
 
-/** @brief 制动区入口阈值（rad/s，电机轴侧）。运动学解算的电机目标转速绝对值低于
- *   此值时认为"摇杆回中"，进入制动流程。默认 0.3 rad/s。
- *   Ozone 调参：太小 → 轻微触碰摇杆就触发制动（不灵敏）；太大 → 车速接近零
- *   时才触发（制动太晚）。设 0 则完全禁用制动功能。 */
+/** @brief 制动区入口阈值（rad/s，电机轴侧）。
+ *
+ *   判断对象：ChassisToMotors() 解算的电机目标转速 motor_speeds[i]。
+ *   摇杆回中 → 运动学解算 vx=vy=ω=0 → 电机目标转速全为零 → 进入制动区。
+ *
+ *   | motor_speeds[i] | < threshold → 制动区（认为摇杆已回中）
+ *   | motor_speeds[i] | ≥ threshold → 正常驱动
+ *
+ *   默认 0.3 rad/s。
+ *
+ *   Ozone 调参：
+ *   - 太小（如 0.05）：摇杆必须几乎完全回中才触发 → 制动触发困难，车滑很远才停
+ *   - 太大（如 3.0）：轻推摇杆时目标转速仍低于阈值 → 正常行驶中误触发制动
+ *   - 设 0：完全禁用制动功能（跳过段 0 和段 1，摇杆回中后电机不减速）
+ *
+ *   典型值范围：0.1 ~ 1.0 rad/s。与遥控器死区 debug_remote_deadzone 配合：
+ *   死区越大 → 摇杆中位附近输出越稳定（接近零）→ 阈值可以设小一些。 */
 volatile float    debug_brake_threshold_rad_s     = 0.3f;
 
 /** @brief 【段 0】底盘级反向制动线速度（m/s）。摇杆回中后，前向运动学反算出底盘
@@ -69,6 +82,17 @@ volatile float    debug_brake_reverse_omega_rad_s = 0.3f;
  *   debug_brake_reverse_omega_rad_s。仅保留以便兼容旧版 Ozone 工程，
  *   当前代码不再引用此变量。 */
 volatile float    debug_brake_reverse_speed_rad_s = 1.0f;
+
+/** @brief 【段 0】制动时长比例系数（控制迭代次数 每 m/s）。
+ *   段 0 制动持续迭代次数 = 入口速度(m/s) × 此系数。
+ *   默认 25.0 次每 m/s：1 m/s → 250ms，2 m/s → 500ms。
+ *   Ozone 调参：制动太猛/弹跳 → 调小；制动不够/滑太远 → 调大。设 0 跳过段 0。 */
+volatile float    debug_brake_duration_per_ms    = 25.0f;
+
+/** @brief 【段 0】制动最大持续迭代次数（安全上限）。
+ *   防止极端高速下制动时间过长。动态时长超过此值时强制截断。
+ *   默认 80 次（800ms）。设 0 不设上限。 */
+volatile float    debug_brake_max_duration       = 80.0f;
 
 /* ========================================================================
  *   第 2 块：速度环 PID 参数（每电机独立 [MOTOR_COUNT]）
@@ -118,11 +142,15 @@ volatile float debug_kinematics_wheel_radius_m = 0.15f;
 volatile float debug_kinematics_wheel_base_m = 0.15f;
 
 /* 逆时针（CCW）偏航修正增益（rad/s 每 m/s 平移速度），默认 0 禁用。 */
-volatile float debug_kinematics_ccw_correction_gain = 0.45f;
+volatile float debug_kinematics_ccw_correction_gain = 0.4f;//0.45
 
 /* 速度矢量偏向角（°），正值=CCW 旋转，默认 0 不旋转。
  * 推正前车往左前偏 → 在 Ozone 中增大此值做顺时针修正。 */
 volatile float debug_kinematics_bias_angle_deg = 0.0f;
+
+/* CCW 偏航修正对角死区角（°）。速度矢量方向与最近对角线（45° 倍数）夹角
+ * 小于此值时跳过 CCW 修正，避免纯对角线推杆时过旋转。默认 15°。 */
+volatile float debug_kinematics_ccw_dead_angle_deg = 15.0f;
 
 /* ========================================================================
  *   第 5 块：运行时诊断变量（每电机独立 [MOTOR_COUNT]，只读观察）

@@ -62,13 +62,17 @@
 /* USER CODE BEGIN PV */
 
 /** @brief 进入制动区时的 debug_control_task_count 快照（底盘级，非逐电机）。
- *   用于反向制动阶段的计时：若当前控制迭代次数与入口计数之差
- *   不足 BRAKE_HS_COUNT，则施加底盘级反向制动（线速度+角速度）。 */
+ *   用于反向制动阶段的计时：当前控制迭代次数与入口计数之差
+ *   小于动态制动次数时，施加底盘级反向制动。 */
 static uint32_t brake_entry_tick = 0U;
 
 /** @brief 上一轮迭代是否处于制动区（底盘级，边沿检测用）。
  *   用于在进入制动区的上升沿记录制动起始时刻。 */
 static uint8_t  brake_in_zone = 0U;
+
+/** @brief 进入制动区时的底盘实际平移速度大小（m/s）。
+ *   在制动上升沿由前向运动学反算，用于计算与速度成正比的制动时长。 */
+static float    brake_entry_speed_ms = 0.0f;
 
 /* USER CODE END PV */
 
@@ -211,6 +215,10 @@ int main(void)
            *       用于矫正因机械不对称（四电机出力不均、重心偏移）导致的直行偏航。
            *       omega += gain × sqrt(vx² + vy²)，正值=CCW，设 0 禁用。
            *
+           *       对角死区：当速度矢量方向接近纯对角线方向（45°、135°、225°、315°），
+           *       即与一三象限或二四象限角平分线的夹角 < debug_kinematics_ccw_dead_angle_deg
+           *       （默认 15°）时，跳过 CCW 修正，避免对角线推杆时过旋转。
+           *
            * 两项补偿独立可调，Ozone 中修改后立即生效。 */
           if (debug_kinematics_bias_angle_deg != 0.0f)
           {
@@ -226,7 +234,29 @@ int main(void)
           if (debug_kinematics_ccw_correction_gain != 0.0f)
           {
             float speed_mag = sqrtf(chassis_vx * chassis_vx + chassis_vy * chassis_vy);
-            chassis_omega += debug_kinematics_ccw_correction_gain * speed_mag;
+            uint8_t apply_ccw = 1U;
+
+            /* 对角死区：速度矢量接近 45° 对角线方向时跳过 CCW 修正 */
+            if (debug_kinematics_ccw_dead_angle_deg > 0.0f && speed_mag > 0.005f)
+            {
+              float angle = atan2f(chassis_vy, chassis_vx);
+              if (angle < 0.0f) angle += 2.0f * 3.14159265f;
+              /* 将所有方向映射到 [0, π/2)，对角线位于 π/4 (45°) */
+              float mod = angle;
+              while (mod >= 3.14159265f / 2.0f) mod -= 3.14159265f / 2.0f;
+              float dist = (mod > 3.14159265f / 4.0f)
+                  ? (mod - 3.14159265f / 4.0f)
+                  : (3.14159265f / 4.0f - mod);
+              if (dist < debug_kinematics_ccw_dead_angle_deg * (3.14159265f / 180.0f))
+              {
+                apply_ccw = 0U;
+              }
+            }
+
+            if (apply_ccw)
+            {
+              chassis_omega += debug_kinematics_ccw_correction_gain * speed_mag;
+            }
           }
 
           /* 步骤 3：底盘目标运动（已补偿）→ 4 电机目标转速（rad/s，电机轴侧） */
@@ -238,15 +268,20 @@ int main(void)
            * 制动策略（底盘级两段式，无位置环）：
            *   摇杆中位 → 所有电机解算转速低于 debug_brake_threshold_rad_s → 进入制动区。
            *
-           *   段 0 — 底盘级反向制动（0~300ms，BRAKE_HS_COUNT 次控制迭代）：
-           *          前向运动学从实际电机转速反算底盘 (vx, vy, omega) →
+           *   段 0 — 底盘级反向制动（动态时长，与入口速度成正比）：
+           *          上升沿：前向运动学反算底盘实际 (vx, vy) → 记录入口速度大小
+           *          brake_entry_speed_ms，制动次数 = 入口速度 × debug_brake_duration_per_ms
+           *          （默认 25 次每 m/s，1 m/s → 250ms，2 m/s → 500ms），
+           *          上限由 debug_brake_max_duration 截断（默认 80 次 = 800ms）。
+           *
+           *          每迭代：前向运动学从实际电机转速反算底盘 (vx, vy, omega) →
            *          施加与运动方向相反的小速度（线速度+角速度）→
            *          逆运动学分解为一致的四电机目标转速。
            *
            *          线速度强度：debug_brake_reverse_speed_ms（默认 0.1 m/s）
            *          角速度强度：debug_brake_reverse_omega_rad_s（默认 0.5 rad/s）
            *          — 若两者均为 0，跳过此阶段直接进入段 1。
-           *          — 若 BRAKE_HS_COUNT == 0，跳过此阶段直接进入段 1。
+           *          — 若 debug_brake_duration_per_ms == 0，跳过此阶段直接进入段 1。
            *
            *   段 1 — 强制零电流：反向制动时间到（或已禁用）后，强制 iq=0，
            *          电机纯靠地面摩擦力滑行至自然停止。只要摇杆保持中位，
@@ -263,17 +298,34 @@ int main(void)
             {
               /* ====== 制动区：摇杆中位 ====== */
 
-              /* 边沿检测：刚进入制动区 → 记录当前控制任务计数 */
+              /* 边沿检测：刚进入制动区 → 记录时间戳 + 入口速度 */
               if (!brake_in_zone)
               {
                 brake_entry_tick = debug_control_task_count;
+                /* 前向运动学反算底盘实际平移速度，作为制动时长的比例基准 */
+                {
+                  float entry_vx, entry_vy, entry_omega;
+                  ChassisKinematics_MotorsToChassis(
+                      debug_actual_speed_rad_s,
+                      &entry_vx, &entry_vy, &entry_omega);
+                  brake_entry_speed_ms = sqrtf(entry_vx * entry_vx + entry_vy * entry_vy);
+                }
                 brake_in_zone = 1U;
               }
 
-              if ((debug_brake_reverse_speed_ms > 0.0f ||
-                    debug_brake_reverse_omega_rad_s > 0.0f) &&
-                  BRAKE_HS_COUNT > 0U &&
-                  (debug_control_task_count - brake_entry_tick) < BRAKE_HS_COUNT)
+              /* 动态制动次数：与入口速度成正比 + 最大上限截断 */
+              {
+                uint32_t brake_dur = (uint32_t)(brake_entry_speed_ms * debug_brake_duration_per_ms);
+                if (debug_brake_max_duration > 0.0f &&
+                    brake_dur > (uint32_t)debug_brake_max_duration)
+                {
+                  brake_dur = (uint32_t)debug_brake_max_duration;
+                }
+
+                if ((debug_brake_reverse_speed_ms > 0.0f ||
+                      debug_brake_reverse_omega_rad_s > 0.0f) &&
+                    brake_dur > 0U &&
+                    (debug_control_task_count - brake_entry_tick) < brake_dur)
               {
                 /* 段 0 — 底盘级反向制动：
                  *
@@ -343,6 +395,7 @@ int main(void)
                 }
                 break;  /* 已在循环内设置了全部 4 电机，跳出外层 for */
               }
+              }  /* 关闭 brake_dur 作用域 */
             }
             else
             {
